@@ -4,13 +4,19 @@
 	extern "C" {
 #endif
 
-#if !defined(offsetof)
 #define offsetof(st, m) __builtin_offsetof(st, m)
+
+// VSCode's IntelliSense doesn't know about 68000 registers, so suppress warnings
+#ifndef __INTELLISENSE__
+    #define ASM __asm
+#else
+    #define ASM(...)
 #endif
 
 void *memcpy (void *, const void *, unsigned long);
 void *memset (void *, int, unsigned long);
 void *memmove (void *, const void *, unsigned long);
+void memclr(void* dest, unsigned long len);
 unsigned long strlen (const char *);
 void warpmode(int on); // bool on/off
 void KPrintF(const char* fmt, ...); // output to debugger
@@ -29,11 +35,17 @@ void debug_stop_idle();
 enum debug_resource_flags {
     debug_resource_bitmap_interleaved = 1 << 0,
     debug_resource_bitmap_masked = 1 << 1,
+    debug_resource_bitmap_ham = 1 << 2,
 };
 
 void debug_register_bitmap(const void* addr, const char* name, short width, short height, short numPlanes, unsigned short flags);
 void debug_register_palette(const void* addr, const char* name, short numEntries, unsigned short flags);
 void debug_register_copperlist(const void* addr, const char* name, unsigned int size, unsigned short flags);
+void debug_unregister(const void* addr); // NULL to unregister all
+
+// load/save data during debugging
+unsigned int debug_load(const void* addr, const char* name); // returns size (0 if file not found)
+void debug_save(const void* addr, unsigned int size, const char* name);
 
 #define INCBIN(name, file) INCBIN_SECTION(name, file, ".rodata", "")
 #define INCBIN_CHIP(name, file) INCBIN_SECTION(name, file, ".INCBIN.MEMF_CHIP", "aw")
@@ -57,19 +69,19 @@ void debug_register_copperlist(const void* addr, const char* name, unsigned int 
 	extern const void* incbin_ ## name ## _end;\
     const void* name = &incbin_ ## name ## _start;
 
-inline unsigned int muluw(unsigned short a, unsigned short b) {
+__attribute__((always_inline)) inline unsigned int muluw(unsigned short a, unsigned short b) {
     asm("muluw %1,%0":"+d"(a): "mid"(b): "cc");
     return a;
 }
-inline int mulsw(short a, short b) {
+__attribute__((always_inline)) inline int mulsw(short a, short b) {
     asm("mulsw %1,%0":"+d"(a): "mid"(b): "cc");
     return a;
 }
-inline unsigned short divuw(unsigned int a, unsigned short b) {
+__attribute__((always_inline)) inline unsigned short divuw(unsigned int a, unsigned short b) {
     asm("divuw %1,%0":"+d"(a): "mid"(b): "cc");
     return a;
 }
-inline short divsw(int a, short b) {
+__attribute__((always_inline)) inline short divsw(int a, short b) {
     asm("divsw %1,%0":"+d"(a): "mid"(b): "cc");
     return a;
 }

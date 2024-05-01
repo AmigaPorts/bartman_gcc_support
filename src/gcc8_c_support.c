@@ -2,30 +2,64 @@
 #include <proto/exec.h>
 extern struct ExecBase* SysBase;
 
-unsigned long strlen(const char* s)
-{
+unsigned long strlen(const char* s) {
 	unsigned long t=0;
 	while(*s++)
 		t++;
 	return t;
 }
 
-#if defined(NDEBUG)
-__attribute__((optimize("no-tree-loop-distribute-patterns")))
-#endif
-void* memset(void *dest, int val, unsigned long len)
-{
+void memclr(void* dest, unsigned long len) { // dest: 16bit-aligned, len: multiple of 2
+	__asm volatile (
+		"add.l %[len], %[dest]\n"
+		"moveq #0, %%d0\n"
+		"moveq #0, %%d1\n"
+		"moveq #0, %%d2\n"
+		"moveq #0, %%d3\n"
+		"cmp.l #256, %[len]\n"
+		"blt 2f\n"
+		"1:\n"
+		".rept 256/16\n"
+		"movem.l %%d0-%%d3, -(%[dest])\n"
+		".endr\n"
+		"sub.l #256, %[len]\n"
+		"cmp.l #256, %[len]\n"
+		"bge 1b\n"
+		"2:\n" // <256
+		"cmp.w #64, %[len]\n"
+		"blt 3f\n"
+		".rept 64/16\n"
+		"movem.l %%d0-%%d3, -(%[dest])\n"
+		".endr\n"
+		"sub.w #64, %[len]\n"
+		"bra 2b\n"
+		"3:\n" // <64
+		"lsr.w #2, %[len]\n" // 4
+		"bcc 4f\n" // stray word
+		"move.w %%d0,-(%[dest])\n"
+		"4:\n"
+		"moveq #64>>2, %%d1\n"
+		"sub.w %[len], %%d1\n"
+		"add.w %%d1, %%d1\n"
+		"jmp (2, %%d1.w, %%pc)\n"
+		".rept 64/4\n"
+		"move.l %%d0,-(%[dest])\n"
+		".endr\n"
+	: [dest]"+a"(dest), [len]"+d"(len)
+	:
+	: "memory", "d0", "d1", "d2", "d3", "cc");
+}
+
+__attribute__((optimize("no-tree-loop-distribute-patterns"))) 
+void* memset(void *dest, int val, unsigned long len) {
 	unsigned char *ptr = (unsigned char *)dest;
 	while(len-- > 0)
 		*ptr++ = val;
 	return dest;
 }
 
-#if defined(NDEBUG)
-__attribute__((optimize("no-tree-loop-distribute-patterns")))
-#endif
-void* memcpy(void *dest, const void *src, unsigned long len)
-{
+__attribute__((optimize("no-tree-loop-distribute-patterns"))) 
+void* memcpy(void *dest, const void *src, unsigned long len) {
 	char *d = (char *)dest;
 	const char *s = (const char *)src;
 	while(len--)
@@ -33,11 +67,8 @@ void* memcpy(void *dest, const void *src, unsigned long len)
 	return dest;
 }
 
-#if defined(NDEBUG)
-__attribute__((optimize("no-tree-loop-distribute-patterns")))
-#endif
-void* memmove(void *dest, const void *src, unsigned long len)
-{
+__attribute__((optimize("no-tree-loop-distribute-patterns"))) 
+void* memmove(void *dest, const void *src, unsigned long len) {
 	char *d = dest;
 	const char *s = src;
 	if (d < s) {
@@ -54,14 +85,13 @@ void* memmove(void *dest, const void *src, unsigned long len)
 
 // vbcc
 typedef unsigned char *va_list;
-#define va_start(ap, lastarg) ((ap)=(va_list)(&lastarg+1))
+#define va_start(ap, lastarg) ((ap)=(va_list)(&lastarg+1)) 
 
 void KPutCharX();
 void PutChar();
 
 __attribute__((noinline)) __attribute__((optimize("O1")))
-void KPrintF(const char* fmt, ...)
-{
+void KPrintF(const char* fmt, ...) {
 	va_list vl;
 	va_start(vl, fmt);
 	long(*UaeDbgLog)(long mode, const char* string) = (long(*)(long, const char*))0xf0ff60;
@@ -104,19 +134,20 @@ __attribute__((used)) __attribute__((section(".text.unlikely"))) void _start() {
 		__fini_array_start[i - 1]();
 }
 
-void warpmode(int on) // bool
-{
+void warpmode(int on) { // bool
 	long(*UaeConf)(long mode, int index, const char* param, int param_len, char* outbuf, int outbuf_len);
 	UaeConf = (long(*)(long, int, const char*, int, char*, int))0xf0ff60;
 	if(*((UWORD *)UaeConf) == 0x4eb9 || *((UWORD *)UaeConf) == 0xa00e) {
 		char outbuf;
-		UaeConf(82, -1, on ? "warp true" : "warp false", 0, &outbuf, 1);
+		UaeConf(82, -1, on ? "cpu_speed max" : "cpu_speed real", 0, &outbuf, 1);
+		UaeConf(82, -1, on ? "cpu_cycle_exact false" : "cpu_cycle_exact true", 0, &outbuf, 1);
+		UaeConf(82, -1, on ? "cpu_memory_cycle_exact false" : "cpu_memory_cycle_exact true", 0, &outbuf, 1);
 		UaeConf(82, -1, on ? "blitter_cycle_exact false" : "blitter_cycle_exact true", 0, &outbuf, 1);
+		UaeConf(82, -1, on ? "warp true" : "warp false", 0, &outbuf, 1);
 	}
 }
 
-static void debug_cmd(unsigned int arg1, unsigned int arg2, unsigned int arg3, unsigned int arg4)
-{
+static void debug_cmd(unsigned int arg1, unsigned int arg2, unsigned int arg3, unsigned int arg4) {
 	long(*UaeLib)(unsigned int arg0, unsigned int arg1, unsigned int arg2, unsigned int arg3, unsigned int arg4);
 	UaeLib = (long(*)(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int))0xf0ff60;
 	if(*((UWORD *)UaeLib) == 0x4eb9 || *((UWORD *)UaeLib) == 0xa00e) {
@@ -131,6 +162,9 @@ enum barto_cmd {
 	barto_cmd_text,
 	barto_cmd_register_resource,
 	barto_cmd_set_idle,
+	barto_cmd_unregister_resource,
+	barto_cmd_load,
+	barto_cmd_save
 };
 
 enum debug_resource_type {
@@ -228,4 +262,28 @@ void debug_register_copperlist(const void* addr, const char* name, unsigned int 
 	};
 	my_strncpy(resource.name, name, sizeof(resource.name));
 	debug_cmd(barto_cmd_register_resource, (unsigned int)&resource, 0, 0);
+}
+
+void debug_unregister(const void* addr) {
+	debug_cmd(barto_cmd_unregister_resource, (unsigned int)addr, 0, 0);
+}
+
+// load/save
+unsigned int debug_load(const void* addr, const char* name) {
+	struct debug_resource resource = {
+		.address = (unsigned int)addr,
+		.size = 0,
+	};
+	my_strncpy(resource.name, name, sizeof(resource.name));
+	debug_cmd(barto_cmd_load, (unsigned int)&resource, 0, 0);
+	return resource.size;
+}
+
+void debug_save(const void* addr, unsigned int size, const char* name) {
+	struct debug_resource resource = {
+		.address = (unsigned int)addr,
+		.size = size,
+	};
+	my_strncpy(resource.name, name, sizeof(resource.name));
+	debug_cmd(barto_cmd_save, (unsigned int)&resource, 0, 0);
 }
